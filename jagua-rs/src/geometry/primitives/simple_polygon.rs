@@ -127,6 +127,16 @@ impl SimplePolygon {
         AARectangle::new(x_min, y_min, x_max, y_max)
     }
 
+    // check the rotation
+    pub fn is_clockwise(&self) -> bool {
+        Self::calculate_area(&self.points) > 0.0
+    }
+
+    /// Dreht die Punkte eines Polygons um
+    pub fn reverse(&mut self) {
+        self.points.reverse();
+    }
+
     //https://en.wikipedia.org/wiki/Shoelace_formula
     //counterclockwise = positive area, clockwise = negative area
     pub fn calculate_area(points: &[Point]) -> fsize {

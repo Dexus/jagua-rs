@@ -128,8 +128,26 @@ impl Parser {
             JsonShape::SimplePolygon(sp) => {
                 convert_json_simple_poly(sp, self.poly_simpl_config, PolySimplMode::Inflate)
             }
-            JsonShape::Polygon(_) => {
-                unimplemented!("No support for polygon shapes yet")
+            JsonShape::Polygon(jsp) => {
+                let outer = convert_json_simple_poly(
+                    &jsp.outer,
+                    self.poly_simpl_config,
+                    PolySimplMode::Inflate,
+                );
+
+                let inner_vec: Vec<_> = jsp
+                    .inner
+                    .iter()
+                    .map(|x| {
+                        convert_json_simple_poly(
+                            x,
+                            self.poly_simpl_config,
+                            PolySimplMode::Inflate,
+                        )
+                    })
+                    .collect();
+
+                connect_hole_to_outer(outer, inner_vec, 1e-8)
             }
             JsonShape::MultiPolygon(_) => {
                 unimplemented!("No support for multipolygon shapes yet")
@@ -224,8 +242,26 @@ impl Parser {
                             self.poly_simpl_config,
                             PolySimplMode::Inflate,
                         ),
-                        JsonShape::Polygon(_) => {
-                            unimplemented!("No support for polygon to simplepolygon conversion yet")
+                        JsonShape::Polygon(jsp) => {
+                            let outer = convert_json_simple_poly(
+                                &jsp.outer,
+                                self.poly_simpl_config,
+                                PolySimplMode::Inflate,
+                            );
+
+                            let inner_vec: Vec<_> = jsp
+                                .inner
+                                .iter()
+                                .map(|x| {
+                                    convert_json_simple_poly(
+                                        x,
+                                        self.poly_simpl_config,
+                                        PolySimplMode::Inflate,
+                                    )
+                                })
+                                .collect();
+
+                            connect_hole_to_outer(outer, inner_vec, 1e-8)
                         }
                         JsonShape::MultiPolygon(_) => {
                             unimplemented!("No support for multipolygon shapes yet")
@@ -565,4 +601,73 @@ pub fn pretransform_item(item: &Item, extra_pretransf: &Transformation) -> Item 
 pub fn centering_transformation(shape: &SimplePolygon) -> DTransformation {
     let Point(cx, cy) = shape.centroid();
     DTransformation::new(0.0, (-cx, -cy))
+}
+
+/// Verknüpft ein Loch mit der äußeren Umrandung eines Polygons
+fn connect_hole_to_outer(
+    mut outer_ring: SimplePolygon,
+    mut holes: Vec<SimplePolygon>,
+    separation: fsize,
+) -> SimplePolygon {
+    // Sicherstellen, dass die äußere Umrandung CCW ist
+    if !outer_ring.is_clockwise() {
+        outer_ring.reverse();
+    }
+
+    let mut updated_points = outer_ring.points.clone();
+
+    for mut hole in holes {
+        // Sicherstellen, dass das Loch CW ist
+        if !hole.is_clockwise() {
+            hole.reverse();
+        }
+
+        let mut min_distance = fsize::INFINITY;
+        let mut closest_outer_point = outer_ring.points[0];
+        let mut closest_hole_point = hole.points[0];
+        let mut outer_index = 0;
+
+        // Finde die engsten Punkte zwischen äußerem Ring und Loch
+        for (i, &outer_point) in outer_ring.points.iter().enumerate() {
+            for &hole_point in &hole.points {
+                let dist = distance(outer_point, hole_point);
+                if dist < min_distance {
+                    min_distance = dist;
+                    closest_outer_point = outer_point;
+                    closest_hole_point = hole_point;
+                    outer_index = i;
+                }
+            }
+        }
+
+        let next_outer_point = outer_ring.points[(outer_index + 1) % outer_ring.points.len()];
+
+        // Verbindungspunkte mit minimalem Abstand
+        let connection_point1 =
+            interpolate_point(closest_outer_point, next_outer_point, separation);
+        let connection_point2 =
+            interpolate_point(closest_outer_point, next_outer_point, -separation);
+
+        // Punkte aktualisieren
+        updated_points.splice(
+            outer_index + 1..outer_index + 1,
+            vec![connection_point1, closest_hole_point, connection_point2],
+        );
+    }
+
+    // Neues einfaches Polygon erstellen
+    SimplePolygon::new(updated_points)
+}
+
+/// Berechnet die Distanz zwischen zwei Punkten
+fn distance(p1: Point, p2: Point) -> fsize {
+    ((p1.x() - p2.x()).powi(2) + (p1.y() - p2.y()).powi(2)).sqrt()
+}
+
+/// Berechnet einen Punkt auf der Linie zwischen zwei Punkten
+fn interpolate_point(p1: Point, p2: Point, t: fsize) -> Point {
+    Point(
+        p1.x() + t * (p2.x() - p1.x()),
+        p1.y() + t * (p2.y() - p1.y()),
+    )
 }
